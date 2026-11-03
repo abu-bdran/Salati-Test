@@ -1,0 +1,188 @@
+name: Build Salati App
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.8
+
+      - name: Download official Quran QVP data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/quran_qvp
+          mkdir -p assets/quran/pages
+
+          QURAN_URL="https://github.com/quran-ws/quran-engine/releases/download/v0.1.0/quran-engine-pages-hafs-kfgqpc.tar.gz"
+          QURAN_FILE="/tmp/quran-engine-pages-hafs-kfgqpc.tar.gz"
+
+          echo "Downloading official Quran Engine page data..."
+
+          curl -L \
+            --fail \
+            --retry 5 \
+            --retry-delay 3 \
+            "$QURAN_URL" \
+            -o "$QURAN_FILE"
+
+          echo "Download completed."
+
+          echo "File information:"
+          ls -lh "$QURAN_FILE"
+
+      - name: Verify Quran data archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QURAN_FILE="/tmp/quran-engine-pages-hafs-kfgqpc.tar.gz"
+
+          EXPECTED_SHA256="bbc05984b9a5a2aa4e2bb655d95677825bc01ae679ee5892ada2335980209666"
+
+          ACTUAL_SHA256="$(sha256sum "$QURAN_FILE" | awk '{print $1}')"
+
+          echo "Expected SHA-256:"
+          echo "$EXPECTED_SHA256"
+
+          echo "Actual SHA-256:"
+          echo "$ACTUAL_SHA256"
+
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: Quran archive verification failed."
+            exit 1
+          fi
+
+          echo "Quran archive verification PASSED."
+
+      - name: Extract Quran data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/quran_qvp/*
+          rm -rf assets/quran/pages/*
+
+          tar -xzf \
+            /tmp/quran-engine-pages-hafs-kfgqpc.tar.gz \
+            -C /tmp/quran_qvp
+
+          echo "Extracted Quran data."
+
+          echo "Searching for QVP pages..."
+
+          find /tmp/quran_qvp \
+            -type f \
+            -name "*.qvp" \
+            -print \
+            | sort
+
+      - name: Copy Quran page data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find /tmp/quran_qvp \
+            -type f \
+            -name "*.qvp" \
+            -exec cp {} assets/quran/pages/ \;
+
+          find /tmp/quran_qvp \
+            -type f \
+            -name "*.words.json" \
+            -exec cp {} assets/quran/pages/ \;
+
+          ATLAS_FILE="$(find /tmp/quran_qvp -type f -name "atlas.qva" | head -n 1)"
+
+          if [ -z "$ATLAS_FILE" ]; then
+            echo "ERROR: atlas.qva was not found."
+            exit 1
+          fi
+
+          cp "$ATLAS_FILE" assets/quran/pages/atlas.qva
+
+          echo "Quran data copied successfully."
+
+      - name: Validate Quran data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QVP_COUNT="$(find assets/quran/pages \
+            -maxdepth 1 \
+            -type f \
+            -name "*.qvp" \
+            | wc -l)"
+
+          WORD_COUNT="$(find assets/quran/pages \
+            -maxdepth 1 \
+            -type f \
+            -name "*.words.json" \
+            | wc -l)"
+
+          echo "QVP pages: $QVP_COUNT"
+          echo "Word sidecars: $WORD_COUNT"
+
+          if [ "$QVP_COUNT" -ne 604 ]; then
+            echo "ERROR: Expected 604 QVP pages."
+            exit 1
+          fi
+
+          if [ "$WORD_COUNT" -ne 604 ]; then
+            echo "ERROR: Expected 604 word sidecars."
+            exit 1
+          fi
+
+          if [ ! -s assets/quran/pages/atlas.qva ]; then
+            echo "ERROR: atlas.qva is missing or empty."
+            exit 1
+          fi
+
+          test -s assets/quran/pages/001.qvp
+          test -s assets/quran/pages/001.words.json
+          test -s assets/quran/pages/604.qvp
+          test -s assets/quran/pages/604.words.json
+
+          echo "----------------------------------------"
+          echo "QURAN DATA VALIDATION PASSED"
+          echo "604 QVP pages"
+          echo "604 word sidecars"
+          echo "atlas.qva"
+          echo "----------------------------------------"
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Verify Flutter
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Build Android App Bundle
+        run: flutter build appbundle --release
+
+      - name: Upload Android builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: salati-android-release
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
