@@ -35,6 +35,9 @@ class PrayerApplicationService {
   Future<void> cancelNotifications() =>
       PrayerNotifications.instance.cancelAll();
 
+  Future<void> showAdhanTestNotification() =>
+      PrayerNotifications.instance.showAdhanTestNotification();
+
   Future<void> scheduleNotifications({
     required double latitude,
     required double longitude,
