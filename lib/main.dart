@@ -6533,9 +6533,7 @@ class _SalatiHomeState extends State<SalatiHome>
     BuildContext sheetContext,
   ) async {
     try {
-      await PrayerNotifications
-          .instance
-          .showAdhanTestNotification();
+      await _prayerApplication.showAdhanTestNotification();
 
       if (!mounted ||
           !sheetContext.mounted) {
