@@ -1,3 +1,4 @@
+import 'package:adhan/adhan.dart';
 import '../../execution/prayer/prayer_times_engine.dart';
 import '../../prayer_notifications.dart';
 
