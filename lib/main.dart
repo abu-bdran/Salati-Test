@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature;
 
-import 'package:adhan/adhan.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qvp_flutter/qvp_flutter.dart';
 
-import 'prayer_notifications.dart';
+import 'application/prayer/prayer_application_service.dart';
 
 
 // ============================================================
@@ -64,13 +63,6 @@ const List<int> surahStartPages = <int>[
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.salati.app.audio',
-    androidNotificationChannelName: 'تلاوة القرآن',
-    androidNotificationOngoing: true,
-    androidStopForegroundOnPause: false,
-  );
-
   // Do not force an orientation from the app. The operating system decides
   // whether the device is portrait or landscape according to the user's
   // phone/tablet rotation setting. The Quran reader adapts to that size.
@@ -79,7 +71,26 @@ Future<void> main() async {
     FlutterError.presentError(details);
   };
 
+  // Show the application immediately. Audio background initialization must
+  // not prevent the main interface from appearing if the platform service
+  // is slow or unavailable.
   runApp(const ProviderScope(child: SalatiApp()));
+
+  unawaited(_initializeAudioBackground());
+}
+
+Future<void> _initializeAudioBackground() async {
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.salati.app.audio',
+      androidNotificationChannelName: 'تلاوة القرآن',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: false,
+    );
+  } catch (error, stackTrace) {
+    debugPrint('Audio background initialization error: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
 }
 
 final ja.AudioPlayer _quranBackgroundPlayer = ja.AudioPlayer();
@@ -261,6 +272,8 @@ class SalatiHome extends StatefulWidget {
 
 class _SalatiHomeState extends State<SalatiHome>
     with WidgetsBindingObserver {
+  final PrayerApplicationService _prayerApplication =
+      PrayerApplicationService();
   Position? _position;
 
   bool _loading = false;
@@ -1269,11 +1282,11 @@ class _SalatiHomeState extends State<SalatiHome>
     }
 
     try {
-      await PrayerNotifications.instance
-          .schedulePrayerNotifications(
+      await _prayerApplication.scheduleNotifications(
         latitude: position.latitude,
         longitude: position.longitude,
-        parameters: _parameters(),
+        method: _method,
+        asrSchool: _asrSchool,
         adjustments:
             Map<String, int>.from(_adjustments),
         arabic: _arabic,
@@ -1769,8 +1782,7 @@ class _SalatiHomeState extends State<SalatiHome>
       });
 
       try {
-        await PrayerNotifications.instance
-            .cancelAll();
+        await _prayerApplication.cancelNotifications();
       } catch (e) {
         debugPrint(
           'Prayer notifications cancellation error: $e',
@@ -1846,60 +1858,6 @@ class _SalatiHomeState extends State<SalatiHome>
   // CALCULATION PARAMETERS
   // ============================================================
 
-  CalculationParameters _parameters() {
-    CalculationParameters params;
-
-    switch (_method) {
-      case 1:
-        params =
-            CalculationMethod.umm_al_qura
-                .getParameters();
-        break;
-
-      case 2:
-        params =
-            CalculationMethod.egyptian
-                .getParameters();
-        break;
-
-      case 3:
-        params =
-            CalculationMethod.karachi
-                .getParameters();
-        break;
-
-      case 4:
-        params =
-            CalculationMethod.north_america
-                .getParameters();
-        break;
-
-      case 5:
-        params =
-            CalculationMethod.kuwait
-                .getParameters();
-        break;
-
-      case 6:
-        params =
-            CalculationMethod.qatar
-                .getParameters();
-        break;
-
-      default:
-        params =
-            CalculationMethod
-                .muslim_world_league
-                .getParameters();
-    }
-
-    params.madhab =
-        _asrSchool == 1
-            ? Madhab.hanafi
-            : Madhab.shafi;
-
-    return params;
-  }
 
   // ============================================================
   // CALCULATE PRAYER TIMES
@@ -1907,48 +1865,17 @@ class _SalatiHomeState extends State<SalatiHome>
 
   Map<String, DateTime> _calculateTimes() {
     final position = _position;
-
     if (position == null) {
       return {};
     }
 
-    final coordinates = Coordinates(
-      position.latitude,
-      position.longitude,
-    );
-
-    final date =
-        DateComponents.from(_now);
-
-    final times = PrayerTimes(
-      coordinates,
-      date,
-      _parameters(),
-    );
-
-    final raw = <String, DateTime>{
-      'fajr': times.fajr,
-      'sunrise': times.sunrise,
-      'dhuhr': times.dhuhr,
-      'asr': times.asr,
-      'maghrib': times.maghrib,
-      'isha': times.isha,
-    };
-
-    return raw.map(
-      (key, value) {
-        final adjusted = value.add(
-          Duration(
-            minutes:
-                _adjustments[key] ?? 0,
-          ),
-        );
-
-        return MapEntry(
-          key,
-          adjusted,
-        );
-      },
+    return _prayerApplication.calculateTimes(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      date: _now,
+      method: _method,
+      asrSchool: _asrSchool,
+      adjustments: Map<String, int>.from(_adjustments),
     );
   }
 
